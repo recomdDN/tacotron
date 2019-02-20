@@ -3,7 +3,7 @@ import tensorflow as tf
 from tensorflow.contrib.rnn import RNNCell
 from .modules import prenet
 
-
+# prenet + RNN
 class DecoderPrenetWrapper(RNNCell):
   '''Runs RNN inputs through a prenet before sending them to the cell.'''
   def __init__(self, cell, is_training, layer_sizes):
@@ -21,6 +21,7 @@ class DecoderPrenetWrapper(RNNCell):
     return self._cell.output_size
 
   def call(self, inputs, state):
+    # 先输入prenet, 再输入GRU
     prenet_out = prenet(inputs, self._is_training, self._layer_sizes, scope='decoder_prenet')
     return self._cell(prenet_out, state)
 
