@@ -40,51 +40,54 @@ class Tacotron():
                 initializer=tf.truncated_normal_initializer(stddev=0.5))
             embedded_inputs = tf.nn.embedding_lookup(embedding_table, inputs)  # [N, T_in, embed_depth=256]
 
-            # Encoder
-            prenet_outputs = prenet(embedded_inputs, is_training, hp.prenet_depths)  # [N, T_in, prenet_depths[-1]=128]
-            encoder_outputs = encoder_cbhg(prenet_outputs, input_lengths, is_training,  # [N, T_in, encoder_depth=256]
-                                           hp.encoder_depth)
+            # Encoder, prenet_size=[256, 128]
+            prenet_outputs = prenet(embedded_inputs, is_training, hp.prenet_size)  # [N, T_in, prenet_size[-1]=128]
+            encoder_outputs = encoder_cbhg(prenet_outputs, input_lengths, is_training,  # [N, T_in, encoder_output_size=256]
+                                           output_size=hp.encoder_output_depth)
 
-            # Attention_RNN
+            # Attention_RNN 用target与encoder_output计算attention
             attention_cell = AttentionWrapper(
-                cell=GRUCell(hp.attention_depth),  # attention_depth=256个GRU单元
+                # input_size = 128, output_size = 256
+                cell=GRUCell(num_units=hp.attention_depth),  # 输出size=attention_depth=256
+                # input_size = output_size = 256
                 attention_mechanism=BahdanauAttention(num_units=hp.attention_depth, memory=encoder_outputs),
                 alignment_history=True,
                 output_attention=False)  # [N, T_in, attention_depth=256]
 
-            # 把prenet加入attention_RNN, prenet_depths=[256, 128]
-            attention_cell = DecoderPrenetWrapper(attention_cell, is_training, hp.prenet_depths)
+            # attention_RNN前加入prenet, prenet_size=[256, 128], prenet_output_size=128
+            attention_cell = DecoderPrenetWrapper(attention_cell, is_training, hp.prenet_size)
 
-            # Concatenate attention context vector and RNN cell output into a 2*attention_depth=512D vector.
+            # 将attention context vector和RNN cell output进行拼接
             concat_cell = ConcatOutputAndAttentionWrapper(attention_cell)  # [N, T_in, 2*attention_depth=512]
 
-            # Decoder (layers specified bottom to top):
+            # DecodeRNN为2层残差RNN (layers specified bottom to top):
             decoder_cell = MultiRNNCell([
-                OutputProjectionWrapper(concat_cell, hp.decoder_depth),
-                ResidualWrapper(GRUCell(hp.decoder_depth)),
-                ResidualWrapper(GRUCell(hp.decoder_depth))
+                OutputProjectionWrapper(cell=concat_cell, output_size=hp.decoder_depth),  # 512 -> 256
+                ResidualWrapper(cell=GRUCell(hp.decoder_depth)),
+                ResidualWrapper(cell=GRUCell(hp.decoder_depth))
             ], state_is_tuple=True)  # [N, T_in, decoder_depth=256]
 
-            # Project onto r mel spectrograms (predict r outputs at each RNN step):
+            # Project onto r mel spectrograms (预测r帧):
             output_cell = OutputProjectionWrapper(decoder_cell, hp.num_mels * hp.outputs_per_step)
             decoder_init_state = output_cell.zero_state(batch_size=batch_size, dtype=tf.float32)
 
+            # help决定下个时刻的输入
             if is_training:
-                helper = TacoTrainingHelper(inputs, mel_targets, hp.num_mels, hp.outputs_per_step)
+                helper = TacoTrainingHelper(inputs=inputs, targets=mel_targets, output_dim=hp.num_mels, r=hp.outputs_per_step)
             else:
-                helper = TacoTestHelper(batch_size, hp.num_mels, hp.outputs_per_step)
-
+                helper = TacoTestHelper(batch_size=batch_size, output_dim=hp.num_mels, r=hp.outputs_per_step)
+            # 解码:预测不重叠的帧, 例如r->(r+1,2r), 2r->(2r+1,3r)....
             (decoder_outputs, _), final_decoder_state, _ = tf.contrib.seq2seq.dynamic_decode(
-                BasicDecoder(output_cell, helper, decoder_init_state),
-                maximum_iterations=hp.max_iters)  # [N, T_out/r, M*r]
+                BasicDecoder(output_cell, helper, decoder_init_state),  # 打包成解码器
+                maximum_iterations=hp.max_iters)  # [N, T_out/r, num_mels*r ]
 
             # Reshape outputs to be one output per entry
-            mel_outputs = tf.reshape(decoder_outputs, [batch_size, -1, hp.num_mels])  # [N, T_out, M]
+            mel_outputs = tf.reshape(decoder_outputs, [batch_size, -1, hp.num_mels])  # [N, T_out, M=80]
 
             # Add post-processing CBHG:
-            post_outputs = post_cbhg(mel_outputs, hp.num_mels, is_training,  # [N, T_out, postnet_depth=256]
-                                     hp.postnet_depth)
-            linear_outputs = tf.layers.dense(post_outputs, hp.num_freq)  # [N, T_out, F]
+            post_outputs = post_cbhg(mel_outputs, hp.num_mels, is_training,  # [N, T_out, postnet_output_size=256]
+                                     output_size=hp.postnet_output_size)
+            linear_outputs = tf.layers.dense(post_outputs, hp.num_freq)  # [N, T_out, F=1025]
 
             # Grab alignments from the final decoder state:
             alignments = tf.transpose(final_decoder_state[0].alignment_history.stack(), [1, 2, 0])

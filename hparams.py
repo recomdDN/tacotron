@@ -8,7 +8,7 @@ hparams = tf.contrib.training.HParams(
   cleaners='english_cleaners',
 
   # Audio:
-  num_mels=80,
+  num_mels=80,  # 80维的Mel-Spectrum
   num_freq=1025,
   sample_rate=20000,
   frame_length_ms=50,
@@ -20,9 +20,9 @@ hparams = tf.contrib.training.HParams(
   # Model:
   outputs_per_step=5,
   embed_depth=256,
-  prenet_depths=[256, 128],
-  encoder_depth=256,
-  postnet_depth=256,
+  prenet_size=[256, 128],
+  encoder_output_size=256,
+  postnet_output_size=256,
   attention_depth=256,
   decoder_depth=256,
 

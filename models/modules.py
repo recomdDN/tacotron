@@ -13,7 +13,7 @@ def prenet(inputs, is_training, layer_sizes, scope=None):
     return x
 
 
-def encoder_cbhg(inputs, input_lengths, is_training, depth):
+def encoder_cbhg(inputs, input_lengths, is_training, output_size):
     input_channels = inputs.get_shape()[2]  # 128
     return cbhg(
         inputs,
@@ -21,24 +21,32 @@ def encoder_cbhg(inputs, input_lengths, is_training, depth):
         is_training,
         scope='encoder_cbhg',
         K=16,
-        projections=[128, input_channels],
-        depth=depth)
+        projections=[128, input_channels],  # [128, 128]
+        output_size=output_size)
 
 
-def post_cbhg(inputs, input_dim, is_training, depth):
+def post_cbhg(inputs, input_dim, is_training, output_size):
     return cbhg(
         inputs,
         None,
         is_training,
         scope='post_cbhg',
         K=8,
-        projections=[256, input_dim],
-        depth=depth)
+        projections=[256, input_dim],  # [256, 80]
+        output_size=output_size)
 
 
-# input: [B, T, pre_128 or post_M]
-# depth: pre_256, post_256
-def cbhg(inputs, input_lengths, is_training, scope, K, projections, depth):
+def cbhg(inputs, input_lengths, is_training, scope, K, projections, output_size):
+    """
+    :param inputs: [B, T, pre_128 or post_80]
+    :param input_lengths: 输入文本长度
+    :param is_training:
+    :param scope:
+    :param K: 卷积核最大值
+    :param projections: 投影层维度
+    :param output_size: 输出维度
+    :return:
+    """
     with tf.variable_scope(scope):
         with tf.variable_scope('conv_bank'):
             # 卷积层: [B, T, K*128]
@@ -64,26 +72,26 @@ def cbhg(inputs, input_lengths, is_training, scope, K, projections, depth):
         # Residual connection:
         highway_input = proj2_output + inputs
 
-        half_depth = depth // 2
-        assert half_depth * 2 == depth, 'encoder and postnet depths must be even.'
+        half_size = output_size // 2
+        assert half_size * 2 == output_size, 'encoder and postnet sizes must be even.'
 
         # Handle dimensionality mismatch:
-        if highway_input.shape[2] != half_depth:
-            highway_input = tf.layers.dense(highway_input, half_depth)
+        if highway_input.shape[2] != half_size:
+            highway_input = tf.layers.dense(highway_input, half_size)
 
         # 4-layer HighwayNet: [B, T, depth//2]
         for i in range(4):
-            highway_input = highwaynet(highway_input, 'highway_%d' % (i + 1), half_depth)
+            highway_input = highwaynet(highway_input, 'highway_%d' % (i + 1), half_size)
         rnn_input = highway_input
 
         # 双向RNN: [B, T, input_dim]
         outputs, states = tf.nn.bidirectional_dynamic_rnn(
-            GRUCell(half_depth),
-            GRUCell(half_depth),
+            GRUCell(half_size),
+            GRUCell(half_size),
             rnn_input,
             sequence_length=input_lengths,  # 输入序列长度
             dtype=tf.float32)
-        # [B, T, depth]
+        # [B, T, output_size]
         return tf.concat(outputs, axis=2)  # Concat forward and backward
 
 
