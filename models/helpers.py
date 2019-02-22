@@ -43,12 +43,12 @@ class TacoTrainingHelper(Helper):
         # inputs is [N, T_in], targets is [N, T_out, num_mels=80]
         with tf.name_scope('TacoTrainingHelper'):
             self._batch_size = tf.shape(inputs)[0]
-            self._output_dim = output_dim
+            self._output_dim = output_dim  # 80
 
-            # 每r帧取出一帧
+            # 每隔r帧取出一帧
             self._targets = targets[:, r - 1::r, :]
 
-            # Use full length for every target because we don't want to mask the padding frames
+            # 输入时间长度
             num_steps = tf.shape(self._targets)[1]
             self._lengths = tf.tile([num_steps], [self._batch_size])
 
@@ -66,6 +66,7 @@ class TacoTrainingHelper(Helper):
 
     # 初始输入状态target为shape=[batch_size, output_dim]的0矩阵
     def initialize(self, name=None):
+        # 初始finished和next_inputs
         return (tf.tile([False], [self._batch_size]), _go_frames(self._batch_size, self._output_dim))
 
     def sample(self, time, outputs, state, name=None):

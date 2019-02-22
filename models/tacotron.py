@@ -43,7 +43,7 @@ class Tacotron():
             # Encoder, prenet_size=[256, 128]
             prenet_outputs = prenet(embedded_inputs, is_training, hp.prenet_size)  # [N, T_in, prenet_size[-1]=128]
             encoder_outputs = encoder_cbhg(prenet_outputs, input_lengths, is_training,  # [N, T_in, encoder_output_size=256]
-                                           output_size=hp.encoder_output_depth)
+                                           output_size=hp.encoder_output_size)
 
             # Attention_RNN 用target与encoder_output计算attention
             attention_cell = AttentionWrapper(
@@ -67,11 +67,11 @@ class Tacotron():
                 ResidualWrapper(cell=GRUCell(hp.decoder_depth))
             ], state_is_tuple=True)  # [N, T_in, decoder_depth=256]
 
-            # Project onto r mel spectrograms (预测r帧):
+            # Project onto r mel spectrograms (预测outputs_per_step帧):
             output_cell = OutputProjectionWrapper(decoder_cell, hp.num_mels * hp.outputs_per_step)
             decoder_init_state = output_cell.zero_state(batch_size=batch_size, dtype=tf.float32)
 
-            # help决定下个时刻的输入
+            # help决定下个时刻的输入和初始输入
             if is_training:
                 helper = TacoTrainingHelper(inputs=inputs, targets=mel_targets, output_dim=hp.num_mels, r=hp.outputs_per_step)
             else:
@@ -115,9 +115,11 @@ class Tacotron():
         '''Adds loss to the model. Sets "loss" field. initialize must have been called.'''
         with tf.variable_scope('loss') as scope:
             hp = self._hparams
+            # Mel频谱loss
             self.mel_loss = tf.reduce_mean(tf.abs(self.mel_targets - self.mel_outputs))
+            # Linear loss
             l1 = tf.abs(self.linear_targets - self.linear_outputs)
-            # Prioritize loss for frequencies under 3000 Hz.
+            # 优先考虑3000 Hz以下频率的损耗。
             n_priority_freq = int(3000 / (hp.sample_rate * 0.5) * hp.num_freq)
             self.linear_loss = 0.5 * tf.reduce_mean(l1) + 0.5 * tf.reduce_mean(l1[:, :, 0:n_priority_freq])
             self.loss = self.mel_loss + self.linear_loss
